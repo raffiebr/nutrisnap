@@ -15,10 +15,12 @@ import sheets_mirror
 TZ = ZoneInfo("Asia/Singapore")
 
 # Column order is a contract shared with the Google Sheets mirror — appending
-# columns is OK, reordering breaks existing sheets.
+# columns is OK (caffeine_mg and portion_factor were appended), reordering
+# breaks existing sheets.
 HEADERS = ["timestamp", "date", "meal_name", "calories", "protein_g",
            "carbs_g", "fat_g", "sodium_mg", "sugar_g", "confidence",
-           "source", "items_detail", "user_id"]
+           "source", "items_detail", "user_id", "caffeine_mg",
+           "portion_factor"]
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meals (
@@ -35,18 +37,26 @@ CREATE TABLE IF NOT EXISTS meals (
     confidence TEXT,
     source TEXT,
     items_detail TEXT,
-    user_id INTEGER
+    user_id INTEGER,
+    caffeine_mg REAL DEFAULT 0,
+    portion_factor REAL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_meals_date ON meals(date);
 """
 
 NUMERIC_COLS = ["calories", "protein_g", "carbs_g", "fat_g",
-                "sodium_mg", "sugar_g"]
+                "sodium_mg", "sugar_g", "caffeine_mg"]
 
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(os.environ.get("NUTRISNAP_DB", "nutrisnap.db"))
     conn.executescript(_SCHEMA)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(meals)")]
+    for col, ddl in (("caffeine_mg", "REAL DEFAULT 0"),
+                     ("portion_factor", "REAL DEFAULT 1")):
+        if col not in cols:         # migrate DBs created before this column
+            conn.execute(f"ALTER TABLE meals ADD COLUMN {col} {ddl}")
+            conn.commit()
     return conn
 
 
@@ -62,7 +72,8 @@ def log_meal(analysis: dict, user_id: int, when: datetime | None = None):
         t.get("calories", 0), t.get("protein_g", 0), t.get("carbs_g", 0),
         t.get("fat_g", 0), t.get("sodium_mg", 0), t.get("sugar_g", 0),
         analysis.get("confidence", ""), analysis.get("source", ""),
-        items, user_id,
+        items, user_id, t.get("caffeine_mg", 0),
+        analysis.get("portion_factor", 1),
     ]
     conn = _connect()
     try:
@@ -119,6 +130,7 @@ def today_summary(user_id: int | None = None) -> dict:
         "fat_g": round(df["fat_g"].sum(), 1),
         "sodium_mg": int(df["sodium_mg"].sum()),
         "sugar_g": round(df["sugar_g"].sum(), 1),
+        "caffeine_mg": int(df["caffeine_mg"].sum()),
         "meal_names": df["meal_name"].tolist(),
     }
 

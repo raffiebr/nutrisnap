@@ -35,6 +35,7 @@ ALLOWED_IDS = {int(x) for x in
 CAL_GOAL = int(os.environ.get("DEFAULT_CALORIE_GOAL", 1800))
 SODIUM_LIMIT_MG = float(os.environ.get("DAILY_SODIUM_LIMIT_MG", 2000))
 SUGAR_LIMIT_G = float(os.environ.get("DAILY_SUGAR_LIMIT_G", 50))
+CAFFEINE_LIMIT_MG = float(os.environ.get("DAILY_CAFFEINE_LIMIT_MG", 400))
 
 
 # --------------------------------------------------------------- utilities
@@ -69,23 +70,37 @@ def meter(value: float, limit: float, width: int = 10) -> str:
 
 
 def limits_meters(summary: dict) -> str:
-    """Sodium + sugar consumed today as % of daily limits."""
-    sodium = summary.get("sodium_mg", 0)
-    sugar = summary.get("sugar_g", 0)
-    lines = [f"🧂 Sodium {int(sodium)} / {SODIUM_LIMIT_MG:g} mg",
-             meter(sodium, SODIUM_LIMIT_MG)]
-    if sodium > SODIUM_LIMIT_MG:
-        lines[-1] += f" 🚨 {int(sodium - SODIUM_LIMIT_MG)} mg over"
-    lines += [f"🍬 Sugar {sugar:g} / {SUGAR_LIMIT_G:g} g",
-              meter(sugar, SUGAR_LIMIT_G)]
-    if sugar > SUGAR_LIMIT_G:
-        lines[-1] += f" 🚨 {round(sugar - SUGAR_LIMIT_G, 1):g} g over"
+    """Sodium + sugar + caffeine consumed today as % of daily limits."""
+    lines = []
+    for emoji, name, value, limit, unit in [
+        ("🧂", "Sodium", summary.get("sodium_mg", 0), SODIUM_LIMIT_MG, "mg"),
+        ("🍬", "Sugar", summary.get("sugar_g", 0), SUGAR_LIMIT_G, "g"),
+        ("☕", "Caffeine", summary.get("caffeine_mg", 0), CAFFEINE_LIMIT_MG,
+         "mg"),
+    ]:
+        lines += [f"{emoji} {name} {value:g} / {limit:g} {unit}",
+                  meter(value, limit)]
+        if value > limit:
+            lines[-1] += f" 🚨 {round(value - limit, 1):g} {unit} over"
     return "\n".join(lines)
+
+
+def protein_pct(summary: dict) -> int:
+    """% of today's calories that came from protein (4 kcal per gram)."""
+    cal = summary.get("calories", 0)
+    return round(summary.get("protein_g", 0) * 4 / cal * 100) if cal else 0
+
+
+def display_name(a: dict) -> str:
+    """Meal name with the portion factor shown when scaled (name stays clean
+    in storage; the factor is its own column)."""
+    pf = a.get("portion_factor", 1)
+    return a.get("meal_name", "Meal") + (f" (×{pf:g})" if pf != 1 else "")
 
 
 def fmt_analysis(a: dict) -> str:
     t = a["total"]
-    lines = [f"🍽 *{a.get('meal_name', 'Meal')}*", ""]
+    lines = [f"🍽 *{display_name(a)}*", ""]
     for item in a.get("items", []):
         lines.append(f"  • {item['name']} — {item['portion']} "
                      f"({item['calories']} kcal)")
@@ -96,7 +111,8 @@ def fmt_analysis(a: dict) -> str:
         f"🔥 *{t['calories']} kcal*",
         f"🥩 Protein {t['protein_g']}g   🍞 Carbs {t['carbs_g']}g   "
         f"🧈 Fat {t['fat_g']}g",
-        f"🧂 Sodium {t['sodium_mg']}mg   🍬 Sugar {t['sugar_g']}g",
+        f"🧂 Sodium {t['sodium_mg']}mg   🍬 Sugar {t['sugar_g']}g"
+        + (f"   ☕ {t['caffeine_mg']:g}mg" if t.get("caffeine_mg") else ""),
         "",
         f"{conf} confidence: {a.get('confidence', '?')}",
     ]
@@ -118,11 +134,11 @@ def keyboard(meal_id: str) -> InlineKeyboardMarkup:
 def scale(a: dict, factor: float) -> dict:
     for item in a.get("items", []):
         for k in ("calories", "protein_g", "carbs_g", "fat_g",
-                  "sodium_mg", "sugar_g"):
-            item[k] = round(item[k] * factor, 1)
+                  "sodium_mg", "sugar_g", "caffeine_mg"):
+            item[k] = round(item.get(k, 0) * factor, 1)
     for k in a["total"]:
         a["total"][k] = round(a["total"][k] * factor, 1)
-    a["meal_name"] += f" (×{factor})" if factor > 1 else " (½)"
+    a["portion_factor"] = round(a.get("portion_factor", 1) * factor, 3)
     return a
 
 
@@ -146,7 +162,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome to NutriSnap! Send me:\n"
         "📸 a photo of your meal or a nutrition label\n"
-        "💬 or just type what you ate ('chicken rice + teh bing')\n\n"
+        "💬 or just type what you ate ('chicken rice + teh peng')\n\n"
         "Commands:\n"
         "/today — today's totals + limit meters\n"
         "/week — 7-day summary\n"
@@ -248,7 +264,7 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # then send the confirmation as a separate message.
         await q.edit_message_reply_markup(reply_markup=None)
         await q.message.reply_text(
-            f"✅ Logged *{analysis['meal_name']}*\n\n"
+            f"✅ Logged *{display_name(analysis)}*\n\n"
             f"🔥 Calories {cal} / {goal} kcal\n{meter(cal, goal)}\n"
             f"{'💪 ' + str(remaining) + ' kcal left' if remaining >= 0 else '🚨 ' + str(-remaining) + ' kcal over'}\n\n"
             f"{limits_meters(s)}",
@@ -282,36 +298,44 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 *Today* ({s['meals']} meals)\n{meals}\n\n"
         f"🔥 Calories {s['calories']} / {goal} kcal\n"
         f"{meter(s['calories'], goal)}\n"
-        f"🥩 {s['protein_g']}g protein  🍞 {s['carbs_g']}g carbs  "
-        f"🧈 {s['fat_g']}g fat\n\n"
+        f"🥩 {s['protein_g']}g protein ({protein_pct(s)}% of kcal)  "
+        f"🍞 {s['carbs_g']}g carbs  🧈 {s['fat_g']}g fat\n\n"
         f"{limits_meters(s)}",
         parse_mode=ParseMode.MARKDOWN)
 
 
 def fmt_week(df, goal: int) -> str:
     """7-day rundown: per-day calories with over-limit flags, then averages
-    and how many days breached the sodium/sugar limits."""
+    and how many days breached the sodium/sugar/caffeine limits."""
     daily = df.groupby(df["date"].dt.date)[["calories", "protein_g",
-                                            "sodium_mg", "sugar_g"]].sum()
+                                            "sodium_mg", "sugar_g",
+                                            "caffeine_mg"]].sum()
     lines = [f"📅 *Last 7 days* (goal {goal} kcal/day)\n"]
     for day, row in daily.iterrows():
         mark = "🟢" if row["calories"] <= goal else "🔴"
         flags = ("" + (" 🧂" if row["sodium_mg"] > SODIUM_LIMIT_MG else "")
-                    + (" 🍬" if row["sugar_g"] > SUGAR_LIMIT_G else ""))
+                    + (" 🍬" if row["sugar_g"] > SUGAR_LIMIT_G else "")
+                    + (" ☕" if row["caffeine_mg"] > CAFFEINE_LIMIT_MG else ""))
         lines.append(f"{mark} {day.strftime('%a %d %b')}: "
                      f"{int(row['calories'])} kcal{flags}")
     n = len(daily)
-    over_sodium = int((daily["sodium_mg"] > SODIUM_LIMIT_MG).sum())
-    over_sugar = int((daily["sugar_g"] > SUGAR_LIMIT_G).sum())
+    week_pct = protein_pct({"calories": daily["calories"].sum(),
+                            "protein_g": daily["protein_g"].sum()})
     lines += [
-        f"\nAvg/day: *{int(daily['calories'].mean())} kcal*  "
-        f"🥩 {daily['protein_g'].mean():.0f}g  "
-        f"🧂 {daily['sodium_mg'].mean():.0f}mg  "
-        f"🍬 {daily['sugar_g'].mean():.0f}g",
-        f"🧂 Sodium over limit: {over_sodium}/{n} days",
-        f"🍬 Sugar over limit: {over_sugar}/{n} days",
-        f"{n}/7 days tracked",
+        f"\nAvg/day: *{int(daily['calories'].mean())} kcal* · "
+        f"🥩 {daily['protein_g'].mean():.0f}g ({week_pct}% of kcal)",
+        f"🧂 {daily['sodium_mg'].mean():.0f}mg · "
+        f"🍬 {daily['sugar_g'].mean():.0f}g · "
+        f"☕ {daily['caffeine_mg'].mean():.0f}mg",
     ]
+    for emoji, name, col, limit in [
+        ("🧂", "Sodium", "sodium_mg", SODIUM_LIMIT_MG),
+        ("🍬", "Sugar", "sugar_g", SUGAR_LIMIT_G),
+        ("☕", "Caffeine", "caffeine_mg", CAFFEINE_LIMIT_MG),
+    ]:
+        over = int((daily[col] > limit).sum())
+        lines.append(f"{emoji} {name} over limit: {over}/{n} days")
+    lines.append(f"{n}/7 days tracked")
     return "\n".join(lines)
 
 
@@ -390,7 +414,8 @@ async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
             text = (f"🌙 *Daily summary* ({s['meals']} meals)\n{meals}\n\n"
                     f"🔥 Calories {s['calories']} / {goal} kcal\n"
                     f"{meter(s['calories'], goal)}\n"
-                    f"🥩 {s['protein_g']}g protein  🍞 {s['carbs_g']}g carbs  "
+                    f"🥩 {s['protein_g']}g protein ({protein_pct(s)}% of "
+                    f"kcal)  🍞 {s['carbs_g']}g carbs  "
                     f"🧈 {s['fat_g']}g fat\n\n"
                     f"{limits_meters(s)}")
         try:
@@ -419,24 +444,30 @@ def info_text(goal: int) -> str:
         "(≈5 g of salt)\n"
         f"🍬 Sugar: {SUGAR_LIMIT_G:g} g/day — WHO: free sugars <10% of "
         "energy on a 2,000 kcal diet\n"
+        f"☕ Caffeine: {CAFFEINE_LIMIT_MG:g} mg/day — FDA guideline for "
+        "healthy adults (≈4 cups of coffee)\n"
         f"🔥 Calories: {goal} kcal/day — your personal goal (/goal), "
         "not a WHO value\n"
+        "🥩 Protein % = protein grams × 4 kcal ÷ total calories — a "
+        "diet-quality gauge (typical target 15–25%), shown in /today "
+        "and /week\n"
         "_Note: the bot estimates total sugar, while WHO's limit covers "
-        "free sugars — days heavy on fruit/dairy read slightly high._\n"
-        "_Limits are configurable in the bot's .env file._\n\n"
+        "free sugars — days heavy on fruit/dairy read slightly high. "
+        "Caffeine from photos is a rough estimate — mention \"decaf\" or "
+        "\"double shot\" in captions for accuracy._\n\n"
 
         "*Everything you can do*\n"
         "📸 photo — analyze a meal or nutrition label\n"
         "📸+💬 photo with caption — caption overrides the photo: "
         "\"no sugar\", \"oat milk\", \"ate half\"\n"
-        "💬 text — \"chicken rice + teh bing\"\n"
+        "💬 text — \"chicken rice + teh peng\"\n"
         "✏️ Fix — correct an estimate: \"it was 2 slices, no rice\"\n"
         "½ / ×2 — scale the portion before logging\n"
         "/today — today's totals + limit meters\n"
         "/week — 7-day rundown: daily calories, averages, days over limit\n"
         "/chart [days] — progress charts, e.g. /chart 7 (default 30)\n"
         "/goal <kcal> — set your calorie goal, e.g. /goal 1800\n"
-        "/limits — sodium & sugar % consumed today\n"
+        "/limits — sodium, sugar & caffeine % consumed today\n"
         "/undo — delete your last logged meal\n"
         "↪️ forward someone's message — shows their Telegram ID "
         "(for whitelisting)\n\n"

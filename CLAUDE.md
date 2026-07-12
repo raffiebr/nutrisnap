@@ -34,9 +34,13 @@ Keep this separation. New integrations get their own module.
 4. **The JSON schema in `llm.py`'s SYSTEM_PROMPT is a contract.**
    `fmt_analysis`, `storage.log_meal`, and `scale` all depend on it. If you
    change the schema, update all three.
-5. Tracked nutrients: calories, protein_g, carbs_g, fat_g, sodium_mg, sugar_g.
-   Column order is fixed in `storage.HEADERS` (shared with the Sheets
-   mirror) — appending columns is OK, reordering breaks existing sheets.
+5. Tracked nutrients: calories, protein_g, carbs_g, fat_g, sodium_mg,
+   sugar_g, caffeine_mg. Column order is fixed in `storage.HEADERS` (shared
+   with the Sheets mirror) — appending columns is OK (caffeine_mg and
+   portion_factor were appended after user_id), reordering breaks existing
+   sheets. New columns also need a PRAGMA-based ALTER TABLE migration in
+   `storage._connect`. portion_factor (default 1) records ½/×2 scaling;
+   meal_name stays clean — `bot.display_name` adds the suffix for display.
 
 ## Conventions
 
@@ -55,9 +59,9 @@ Keep this separation. New integrations get their own module.
   finds outermost `{}`). Don't assume clean JSON from the model.
 - LLM-produced strings pass through `bot.sanitize` before display — Telegram
   MARKDOWN parse errors come from stray `*`/`_` in meal names.
-- Daily limits (WHO defaults): sodium 2000 mg, sugar 50 g — env-overridable
-  (`DAILY_SODIUM_LIMIT_MG`, `DAILY_SUGAR_LIMIT_G`), read by bot.py and
-  charts.py.
+- Daily limits: sodium 2000 mg, sugar 50 g (WHO), caffeine 400 mg (FDA) —
+  env-overridable (`DAILY_SODIUM_LIMIT_MG`, `DAILY_SUGAR_LIMIT_G`,
+  `DAILY_CAFFEINE_LIMIT_MG`), read by bot.py and charts.py.
 - `python-telegram-bot` v21+ async API. All handlers are `async def`.
 - Secrets live in `.env` (see `.env.example`) + `service_account.json`.
   Both are gitignored — never commit or print them.

@@ -34,17 +34,21 @@ Rules:
   AUTHORITATIVE — it corrects or adds what the photo can't show (e.g.
   "no sugar" -> zero added sugar, "oat milk" -> swap the milk, "ate half"
   -> halve everything, "there's cheese inside" -> add it).
+- Estimate caffeine_mg per item: kopi ~100, teh ~35, espresso shot ~65,
+  brewed coffee cup ~95, cola can ~35, energy drink ~80, dark chocolate
+  ~20/30g. Food and non-caffeinated drinks are 0. If unsure whether decaf,
+  assume caffeinated and note it.
 
 Respond with ONLY a JSON object, no markdown fences, in exactly this shape:
 {
-  "meal_name": "short human-friendly name, e.g. 'Chicken Rice + Teh Bing'",
+  "meal_name": "short human-friendly name, e.g. 'Chicken Rice + Teh Peng'",
   "items": [
     {"name": "...", "portion": "e.g. 1 plate / 250g / 1 bowl",
      "calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0,
-     "sodium_mg": 0, "sugar_g": 0}
+     "sodium_mg": 0, "sugar_g": 0, "caffeine_mg": 0}
   ],
   "total": {"calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0,
-            "sodium_mg": 0, "sugar_g": 0},
+            "sodium_mg": 0, "sugar_g": 0, "caffeine_mg": 0},
   "confidence": "high|medium|low",
   "source": "meal_photo|nutrition_label|text",
   "notes": "one short sentence of caveats or observations"
