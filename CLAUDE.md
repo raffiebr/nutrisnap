@@ -4,9 +4,6 @@ Personal nutrition-tracking Telegram bot for 1-2 whitelisted users. Not a
 public product — never add multi-tenant features, onboarding flows, or
 anything that assumes unknown users.
 
-`sandbox/` holds the original prototype from a claude.ai chat — reference
-only, never edit or run it.
-
 ## Architecture (keep this shape)
 
 - `bot.py` — Telegram handlers, inline keyboards, meters, all UX. Polling mode.
@@ -75,7 +72,12 @@ Keep this separation. New integrations get their own module.
 - Source of truth for logged meals: SQLite (`nutrisnap.db`). The Google
   Sheet is a convenience mirror, never read back.
 
-## Testing locally
+## Running & testing
+
+Production runs on a GCP e2-micro VM (`nutrisnap`, us-central1-c) as the
+`nutrisnap` systemd service — see README "Deployment". Only ONE instance
+may poll at a time: stop the VM service (`sudo systemctl stop nutrisnap`)
+before running locally with:
 
 ```bash
 source venv/bin/activate && python bot.py

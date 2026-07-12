@@ -42,16 +42,15 @@ python bot.py
 ```
 Send your bot a photo of your dinner. That's the whole test.
 
-### 4. Google Sheets mirror (optional, anytime later)
-The bot logs everything to SQLite; a Google Sheet copy is nice for browsing
-on any device.
-1. https://console.cloud.google.com → new project → enable **Google Sheets
+### 4. Google Sheets mirror
+Every logged meal is mirrored to a Google Sheet for browsing on any device.
+1. https://console.cloud.google.com → your project → enable **Google Sheets
    API** + **Google Drive API**.
 2. IAM → Service Accounts → create one → Keys → add JSON key → save as
    `service_account.json` in this folder.
-3. Create a Google Sheet named `Nutrition Log` (or your GSHEET_NAME) and
-   **share it with the service account email** (the `client_email` inside the
-   JSON) as Editor.
+3. Create a Google Sheet, **share it with the service account email** (the
+   `client_email` inside the JSON) as Editor, and put the sheet's ID (from
+   its URL) in `GSHEET_ID` in `.env`.
 
 The mirror activates automatically once `service_account.json` exists.
 Mirror failures never block logging — meals are always safe in SQLite.
@@ -79,48 +78,31 @@ Add each person's numeric Telegram ID to `ALLOWED_USER_IDS`
 summaries, charts, undo, and the nightly push are all per-user. The Google
 Sheet mirror is shared — filter the `user_id` column to see one person.
 
-## Deploying later
+## Deployment
 
-Polling mode means **any machine that runs Python 24/7 works** — no domain,
-no open ports, no reverse proxy. Copy `.env` + `nutrisnap.db` (and
-`service_account.json` if using the mirror) alongside the code.
+Runs 24/7 as a systemd service on a GCP Compute Engine **e2-micro**
+(always-free tier) — VM `nutrisnap`, zone `us-central1-c`. Polling mode
+needs no open ports or domain. **Only one instance may poll at a time** —
+stop the VM service before running the bot locally, and vice versa.
 
-**Option A — small VPS (simplest, ~US$4-6/mo)** or **Oracle Cloud free tier**:
+Ops cheatsheet (gcloud, personal account):
+
 ```bash
-# on the server
-git clone <your repo> && cd nutrisnap
-python3 -m venv venv && venv/bin/pip install -r requirements.txt
-# copy .env (and service_account.json) over (scp), then:
-sudo tee /etc/systemd/system/nutrisnap.service <<'EOF'
-[Unit]
-Description=NutriSnap
-After=network.target
+gcloud compute ssh nutrisnap --zone=us-central1-c    # shell on the VM
+# on the VM:
+sudo journalctl -u nutrisnap -f                      # live logs
+sudo systemctl restart nutrisnap                     # restart the bot
 
-[Service]
-WorkingDirectory=/home/ubuntu/nutrisnap
-ExecStart=/home/ubuntu/nutrisnap/venv/bin/python bot.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-sudo systemctl enable --now nutrisnap
+# ship code changes (run from this repo on the Mac):
+tar czf /tmp/deploy.tar.gz --exclude=venv --exclude=.git \
+    --exclude=__pycache__ --exclude=nutrisnap.db --exclude=.DS_Store .
+gcloud compute scp /tmp/deploy.tar.gz nutrisnap:~/ --zone=us-central1-c
+gcloud compute ssh nutrisnap --zone=us-central1-c --command \
+    "tar xzf ~/deploy.tar.gz -C ~/nutrisnap && rm ~/deploy.tar.gz && sudo systemctl restart nutrisnap"
 ```
 
-**Option B — Docker anywhere (Pi, VPS, old laptop):**
-```dockerfile
-FROM python:3.12-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-CMD ["python", "bot.py"]
-```
-```bash
-docker build -t nutrisnap . && docker run -d --restart=always --env-file .env \
-  -v ./nutrisnap.db:/app/nutrisnap.db nutrisnap
-```
+Secrets (`.env`, `service_account.json`) and the SQLite DB live only on the
+VM (with a copy on the Mac) — they are never in git.
 
 ## Ideas for v2
 - Scheduled daily 9pm summary push (`JobQueue` in python-telegram-bot)
