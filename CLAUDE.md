@@ -78,7 +78,9 @@ source venv/bin/activate && python bot.py
 ```
 Then message the bot on Telegram. There is no test suite yet; if adding one,
 mock `llm.analyze_food` and point `NUTRISNAP_DB` at a temp file — never hit
-real APIs in tests.
+real APIs in tests. ALSO set `GOOGLE_SERVICE_ACCOUNT_FILE=/nonexistent`:
+`service_account.json` exists in the project dir, so any test that calls
+`storage.log_meal` will otherwise mirror fake rows into the REAL sheet.
 
 ## Known gaps / v2 backlog (in rough priority order)
 

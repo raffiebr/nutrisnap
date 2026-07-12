@@ -153,7 +153,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/chart [days] — progress chart (default 30)\n"
         "/goal <kcal> — set daily calorie goal\n"
         "/limits — sodium & sugar limits, % consumed today\n"
-        "/undo — delete your last logged meal")
+        "/undo — delete your last logged meal\n"
+        "/info — how the meters work, limit sources, full feature list")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -243,7 +244,10 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         goal = context.user_data.get("goal", CAL_GOAL)
         cal = s.get("calories", 0)
         remaining = goal - cal
-        await q.edit_message_text(
+        # Keep the itemized card visible in chat: only strip its buttons,
+        # then send the confirmation as a separate message.
+        await q.edit_message_reply_markup(reply_markup=None)
+        await q.message.reply_text(
             f"✅ Logged *{analysis['meal_name']}*\n\n"
             f"🔥 Calories {cal} / {goal} kcal\n{meter(cal, goal)}\n"
             f"{'💪 ' + str(remaining) + ' kcal left' if remaining >= 0 else '🚨 ' + str(-remaining) + ' kcal over'}\n\n"
@@ -396,6 +400,70 @@ async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
             log.exception("daily summary to %s failed", uid)
 
 
+def info_text(goal: int) -> str:
+    return (
+        "ℹ️ *How NutriSnap works*\n\n"
+        "Send a meal photo or type what you ate; AI (Gemini) estimates the "
+        "nutrition. Nothing is saved until you press ✅ Log — Fix/½/×2/🗑 "
+        "adjust or drop the estimate first.\n\n"
+
+        "*How the % meters are computed*\n"
+        "% = total from your ✅-logged meals today ÷ daily limit × 100\n"
+        "• \"Today\" resets at midnight Singapore time\n"
+        "• Only confirmed (✅) meals count\n"
+        "• Values are AI estimates from photos/text — read them as trends, "
+        "not lab measurements\n\n"
+
+        "*Limits and where they come from*\n"
+        f"🧂 Sodium: {SODIUM_LIMIT_MG:g} mg/day — WHO guideline "
+        "(≈5 g of salt)\n"
+        f"🍬 Sugar: {SUGAR_LIMIT_G:g} g/day — WHO: free sugars <10% of "
+        "energy on a 2,000 kcal diet\n"
+        f"🔥 Calories: {goal} kcal/day — your personal goal (/goal), "
+        "not a WHO value\n"
+        "_Note: the bot estimates total sugar, while WHO's limit covers "
+        "free sugars — days heavy on fruit/dairy read slightly high._\n"
+        "_Limits are configurable in the bot's .env file._\n\n"
+
+        "*Everything you can do*\n"
+        "📸 photo — analyze a meal or nutrition label\n"
+        "📸+💬 photo with caption — caption overrides the photo: "
+        "\"no sugar\", \"oat milk\", \"ate half\"\n"
+        "💬 text — \"chicken rice + teh bing\"\n"
+        "✏️ Fix — correct an estimate: \"it was 2 slices, no rice\"\n"
+        "½ / ×2 — scale the portion before logging\n"
+        "/today — today's totals + limit meters\n"
+        "/week — 7-day rundown: daily calories, averages, days over limit\n"
+        "/chart [days] — progress charts, e.g. /chart 7 (default 30)\n"
+        "/goal <kcal> — set your calorie goal, e.g. /goal 1800\n"
+        "/limits — sodium & sugar % consumed today\n"
+        "/undo — delete your last logged meal\n"
+        "↪️ forward someone's message — shows their Telegram ID "
+        "(for whitelisting)\n\n"
+
+        "🌙 A daily summary is pushed automatically at 21:00 SGT.")
+
+
+async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+    goal = context.user_data.get("goal", CAL_GOAL)
+    await update.message.reply_text(info_text(goal),
+                                    parse_mode=ParseMode.MARKDOWN)
+
+
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    err = context.error
+    log.error("Handler error: %s: %s", type(err).__name__, err)
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Something went wrong (often just a network blip) — "
+                "please try that again.")
+        except Exception:
+            pass  # the network may still be down; the log line is enough
+
+
 async def post_init(app: Application):
     await app.bot.set_my_commands([
         BotCommand("today", "Today's totals + limit meters"),
@@ -404,6 +472,7 @@ async def post_init(app: Application):
         BotCommand("goal", "Set/show daily calorie goal"),
         BotCommand("limits", "Sodium & sugar % of daily limits"),
         BotCommand("undo", "Delete your last logged meal"),
+        BotCommand("info", "How % meters work, limit sources, all features"),
         BotCommand("start", "How to use NutriSnap"),
     ])
 
@@ -411,8 +480,10 @@ async def post_init(app: Application):
 def main():
     app = (Application.builder()
            .token(os.environ["TELEGRAM_BOT_TOKEN"])
+           .connect_timeout(20).read_timeout(20).write_timeout(30)
            .post_init(post_init)
            .build())
+    app.add_error_handler(on_error)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("today", today))
     app.add_handler(CommandHandler("week", week))
@@ -420,6 +491,7 @@ def main():
     app.add_handler(CommandHandler("goal", goal))
     app.add_handler(CommandHandler("limits", limits))
     app.add_handler(CommandHandler("undo", undo))
+    app.add_handler(CommandHandler("info", info))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,
                                    handle_text))

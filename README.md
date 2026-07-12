@@ -66,6 +66,8 @@ Mirror failures never block logging — meals are always safe in SQLite.
 - `/limits` — sodium & sugar consumed today as % of WHO daily limits
 - `/undo` — delete your last logged meal (SQLite only; an already-mirrored
   sheet row must be removed by hand)
+- `/info` — how the % meters are computed, limit values + sources (WHO),
+  and the full feature list
 
 A nightly summary (totals + meters) is pushed to every whitelisted user at
 `DAILY_SUMMARY_TIME` (default 21:00 SGT).

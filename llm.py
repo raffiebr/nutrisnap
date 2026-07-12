@@ -30,6 +30,10 @@ Rules:
   that these are often high in sodium.
 - Estimates should be realistic, not optimistic. When unsure, give a middle
   estimate and lower the confidence.
+- If the user supplies a caption or extra context with a photo, treat it as
+  AUTHORITATIVE — it corrects or adds what the photo can't show (e.g.
+  "no sugar" -> zero added sugar, "oat milk" -> swap the milk, "ate half"
+  -> halve everything, "there's cheese inside" -> add it).
 
 Respond with ONLY a JSON object, no markdown fences, in exactly this shape:
 {
@@ -122,7 +126,9 @@ def analyze_food(image_bytes: bytes | None = None,
               if image_bytes else
               f"Estimate nutrition for this food description: {description}")
     if image_bytes and description:
-        prompt += f" User's caption/context: {description}"
+        prompt += (f' The user captioned it: "{description}". The caption is '
+                   "authoritative — apply it even if it contradicts or adds "
+                   "to what is visible.")
 
     fn = _analyze_anthropic if PROVIDER == "anthropic" else _analyze_gemini
     return fn(image_bytes, prompt)
